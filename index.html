@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -59,6 +60,14 @@
       border-radius: 8px;
       box-shadow: 0 0 6px rgba(0, 0, 0, 0.1);
     }
+    .warning {
+      background: #fff3cd;
+      color: #856404;
+      padding: 10px;
+      margin: 15px 0;
+      border-left: 5px solid #ffc107;
+      border-radius: 4px;
+    }
     canvas {
       margin-top: 20px;
     }
@@ -67,51 +76,59 @@
 <body>
 
   <h1>Calculadora de Libertad Financiera</h1>
-  <p style="text-align:center; max-width:600px; margin: 0 auto 20px;">Averigua cuántos años te faltan para alcanzar la libertad financiera, cuánto capital necesitas y hasta qué edad tu dinero puede sostenerte según distintos escenarios.</p>
+  <p style="text-align:center; max-width:600px; margin: 0 auto 20px;">
+    Estima cuántos años te faltan para alcanzar la libertad financiera, cuánto necesitas ahorrar, 
+    y si tu capital aguantará con la inflación futura.
+  </p>
 
   <form id="calc-form">
     <div class="form-group">
       <label for="age">Edad actual:</label>
       <input type="number" id="age" required />
-      <small>Introduce tu edad para estimar hasta qué edad podrías mantener tu estilo de vida sin trabajar.</small>
+    </div>
+
+    <div class="form-group">
+      <label for="target-retire-age">Edad a la que te gustaría dejar de trabajar:</label>
+      <input type="number" id="target-retire-age" required />
+      <small>Puede ser antes de alcanzar el capital ideal, y se simula desde ahí retiradas anuales.</small>
     </div>
 
     <div class="form-group">
       <label for="monthly-expenses">Gastos mensuales actuales (€):</label>
       <input type="number" id="monthly-expenses" required />
-      <small>¿Cuánto necesitas al mes para vivir cómodamente? Esto determina tu objetivo de independencia.</small>
     </div>
 
     <div class="form-group">
       <label for="current-savings">Ahorros o inversiones actuales (€):</label>
       <input type="number" id="current-savings" required />
-      <small>Este es tu capital actual invertido o disponible para generar rentabilidad.</small>
     </div>
 
     <div class="form-group">
-      <label for="monthly-contribution">Aportación mensual al ahorro/inversión (€):</label>
+      <label for="monthly-contribution">Aportación mensual (€):</label>
       <input type="number" id="monthly-contribution" required />
-      <small>¿Cuánto puedes ahorrar o invertir cada mes a partir de ahora?</small>
     </div>
 
     <div class="form-group">
       <label for="annual-return">Rentabilidad anual estimada (%):</label>
       <input type="number" id="annual-return" step="0.1" required />
-      <small>Media esperada de crecimiento anual (por ejemplo: 6% para fondos indexados, 4% conservador).</small>
     </div>
 
     <div class="form-group">
-      <label for="withdrawal-rate">Multiplicador de independencia financiera:</label>
+      <label for="inflation">Inflación anual esperada (%):</label>
+      <input type="number" id="inflation" value="2" step="0.1" />
+    </div>
+
+    <div class="form-group">
+      <label for="withdrawal-rate">Multiplicador objetivo (regla del 4% = 25x):</label>
       <select id="withdrawal-rate">
-        <option value="25">25x (regla del 4%)</option>
-        <option value="30">30x (conservador)</option>
+        <option value="25">25x</option>
+        <option value="30">30x</option>
         <option value="custom">Personalizado</option>
       </select>
-      <small>Multiplica tus gastos anuales para saber cuánto necesitas ahorrar para vivir de tus inversiones.</small>
     </div>
 
     <div class="form-group" id="custom-rate-group" style="display: none;">
-      <label for="custom-rate">Introduce tu multiplicador personalizado:</label>
+      <label for="custom-rate">Multiplicador personalizado:</label>
       <input type="number" id="custom-rate" />
     </div>
 
@@ -123,6 +140,7 @@
     <p id="result-years"></p>
     <p id="result-target"></p>
     <p id="result-age"></p>
+    <div class="warning" id="warnings" style="display: none;"></div>
     <canvas id="wealthChart" width="700" height="300"></canvas>
   </div>
 
@@ -139,55 +157,67 @@
       e.preventDefault();
 
       const age = parseInt(document.getElementById("age").value);
+      const retireAge = parseInt(document.getElementById("target-retire-age").value);
       const expenses = parseFloat(document.getElementById("monthly-expenses").value) * 12;
       const current = parseFloat(document.getElementById("current-savings").value);
       const monthly = parseFloat(document.getElementById("monthly-contribution").value);
-      const baseReturn = parseFloat(document.getElementById("annual-return").value) / 100;
+      const returnRate = parseFloat(document.getElementById("annual-return").value) / 100;
+      const inflationRate = parseFloat(document.getElementById("inflation").value) / 100;
 
-      let multiplier = withdrawalSelect.value === "custom"
+      const multiplier = withdrawalSelect.value === "custom"
         ? parseFloat(document.getElementById("custom-rate").value)
         : parseFloat(withdrawalSelect.value);
 
       const target = expenses * multiplier;
-      const returnScenarios = {
-        base: baseReturn,
-        optimistic: baseReturn + 0.02,
-        pessimistic: Math.max(0, baseReturn - 0.02)
-      };
 
-      const buildCurve = (returnRate) => {
-        let total = current;
-        let capital = 0;
-        let years = 0;
-        const curve = [];
-        while (total < target && years < 100) {
-          total = (total + monthly * 12) * (1 + returnRate);
-          curve.push(Math.round(total));
-          years++;
-        }
+      const maxAge = 95;
+      const yearsTotal = maxAge - age;
 
-        capital = total;
-        let drawdownYears = 0;
-        while (capital > 0 && drawdownYears < 100) {
-          capital -= expenses;
+      let yearLabels = [];
+      let baseData = [];
+      let capital = current;
+      let reachedRetirement = false;
+      let inflationAdjustedExpenses = expenses;
+      let warningText = "";
+
+      for (let i = 0; i <= yearsTotal; i++) {
+        let currentAge = age + i;
+        yearLabels.push(currentAge);
+
+        if (!reachedRetirement) {
+          capital = (capital + monthly * 12) * (1 + returnRate);
+          if (currentAge >= retireAge) {
+            reachedRetirement = true;
+          }
+        } else {
+          capital -= inflationAdjustedExpenses;
           capital = capital * (1 + returnRate);
-          curve.push(Math.round(Math.max(0, capital)));
-          drawdownYears++;
         }
-        return { curve, totalYears: years + drawdownYears, accumulationYears: years };
-      };
 
-      const baseData = buildCurve(returnScenarios.base);
-      const optimisticData = buildCurve(returnScenarios.optimistic);
-      const pessimisticData = buildCurve(returnScenarios.pessimistic);
-
-      const totalYears = baseData.curve.length;
-      const yearLabels = Array.from({ length: totalYears }, (_, i) => age + i);
+        inflationAdjustedExpenses *= (1 + inflationRate);
+        baseData.push(Math.round(capital));
+      }
 
       document.getElementById("results").style.display = "block";
-      document.getElementById("result-years").innerText = `📈 Te faltan aproximadamente ${baseData.accumulationYears} años para alcanzar tu libertad financiera.`;
-      document.getElementById("result-target").innerText = `🎯 Necesitarás un capital mínimo de aproximadamente €${Math.round(target).toLocaleString()} para vivir de tus inversiones.`;
-      document.getElementById("result-age").innerText = `📅 Según el escenario base, tu capital podría sostenerte hasta los ${age + baseData.totalYears} años.`;
+      document.getElementById("result-years").innerText =
+        `📈 Simulación desde los ${age} hasta los ${maxAge} años.`;
+      document.getElementById("result-target").innerText =
+        `🎯 Objetivo de independencia: €${Math.round(target).toLocaleString()} (valor actual).`;
+      document.getElementById("result-age").innerText =
+        `📅 A los ${retireAge} años comienzas a depender de tu capital.`;
+
+      const warningBox = document.getElementById("warnings");
+      const finalCapital = baseData[baseData.length - 1];
+
+      if (finalCapital <= 0) {
+        warningBox.style.display = "block";
+        warningBox.innerText = "⚠️ Cuidado: tu capital se agota antes de los 95 años. Considera reducir gastos, ahorrar más o postergar tu retiro.";
+      } else if (retireAge > 80) {
+        warningBox.style.display = "block";
+        warningBox.innerText = "⚠️ Alerta: alcanzas tu independencia muy tarde. ¿Puedes mejorar tu tasa de ahorro o rentabilidad?";
+      } else {
+        warningBox.style.display = "none";
+      }
 
       const ctx = document.getElementById('wealthChart').getContext('2d');
       if (window.capChart) window.capChart.destroy();
@@ -195,38 +225,14 @@
         type: 'line',
         data: {
           labels: yearLabels,
-          datasets: [
-            {
-              label: 'Escenario base',
-              data: baseData.curve,
-              borderColor: '#3498db',
-              backgroundColor: 'rgba(52, 152, 219, 0.1)',
-              tension: 0.2,
-              fill: true
-            },
-            {
-              label: 'Escenario optimista (+2%)',
-              data: optimisticData.curve,
-              borderColor: '#2ecc71',
-              borderDash: [5, 5],
-              fill: false
-            },
-            {
-              label: 'Escenario pesimista (–2%)',
-              data: pessimisticData.curve,
-              borderColor: '#e74c3c',
-              borderDash: [3, 3],
-              fill: false
-            },
-            {
-              label: 'Capital mínimo objetivo',
-              data: Array(totalYears).fill(target),
-              borderColor: '#f39c12',
-              borderDash: [2, 4],
-              fill: false,
-              pointRadius: 0
-            }
-          ]
+          datasets: [{
+            label: 'Capital estimado (€)',
+            data: baseData,
+            borderColor: '#3498db',
+            backgroundColor: 'rgba(52, 152, 219, 0.1)',
+            tension: 0.2,
+            fill: true
+          }]
         },
         options: {
           responsive: true,
@@ -240,6 +246,5 @@
       });
     });
   </script>
-
 </body>
 </html>
