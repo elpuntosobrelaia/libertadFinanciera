@@ -8,10 +8,10 @@
   <style>
     body {
       font-family: Arial, sans-serif;
-      max-width: 800px;
+      max-width: 850px;
       margin: 0 auto;
       padding: 20px;
-      background: #f9f9f9;
+      background: #f7f9fa;
     }
     h1 {
       text-align: center;
@@ -31,6 +31,12 @@
       border: 1px solid #ccc;
       border-radius: 4px;
       font-size: 16px;
+    }
+    small {
+      display: block;
+      color: #555;
+      margin-top: 5px;
+      font-size: 13px;
     }
     button {
       width: 100%;
@@ -61,40 +67,47 @@
 <body>
 
   <h1>Calculadora de Libertad Financiera</h1>
+  <p style="text-align:center; max-width:600px; margin: 0 auto 20px;">Averigua cuántos años te faltan para alcanzar la libertad financiera, cuánto capital necesitas y hasta qué edad tu dinero puede sostenerte según distintos escenarios.</p>
 
   <form id="calc-form">
     <div class="form-group">
       <label for="age">Edad actual:</label>
       <input type="number" id="age" required />
+      <small>Introduce tu edad para estimar hasta qué edad podrías mantener tu estilo de vida sin trabajar.</small>
     </div>
 
     <div class="form-group">
       <label for="monthly-expenses">Gastos mensuales actuales (€):</label>
       <input type="number" id="monthly-expenses" required />
+      <small>¿Cuánto necesitas al mes para vivir cómodamente? Esto determina tu objetivo de independencia.</small>
     </div>
 
     <div class="form-group">
       <label for="current-savings">Ahorros o inversiones actuales (€):</label>
       <input type="number" id="current-savings" required />
+      <small>Este es tu capital actual invertido o disponible para generar rentabilidad.</small>
     </div>
 
     <div class="form-group">
       <label for="monthly-contribution">Aportación mensual al ahorro/inversión (€):</label>
       <input type="number" id="monthly-contribution" required />
+      <small>¿Cuánto puedes ahorrar o invertir cada mes a partir de ahora?</small>
     </div>
 
     <div class="form-group">
       <label for="annual-return">Rentabilidad anual estimada (%):</label>
       <input type="number" id="annual-return" step="0.1" required />
+      <small>Media esperada de crecimiento anual (por ejemplo: 6% para fondos indexados, 4% conservador).</small>
     </div>
 
     <div class="form-group">
       <label for="withdrawal-rate">Multiplicador de independencia financiera:</label>
       <select id="withdrawal-rate">
         <option value="25">25x (regla del 4%)</option>
-        <option value="30">30x (más conservador)</option>
+        <option value="30">30x (conservador)</option>
         <option value="custom">Personalizado</option>
       </select>
+      <small>Multiplica tus gastos anuales para saber cuánto necesitas ahorrar para vivir de tus inversiones.</small>
     </div>
 
     <div class="form-group" id="custom-rate-group" style="display: none;">
@@ -129,63 +142,96 @@
       const expenses = parseFloat(document.getElementById("monthly-expenses").value) * 12;
       const current = parseFloat(document.getElementById("current-savings").value);
       const monthly = parseFloat(document.getElementById("monthly-contribution").value);
-      const returnRate = parseFloat(document.getElementById("annual-return").value) / 100;
-      let multiplier = withdrawalSelect.value === "custom" ? parseFloat(document.getElementById("custom-rate").value) : parseFloat(withdrawalSelect.value);
+      const baseReturn = parseFloat(document.getElementById("annual-return").value) / 100;
+
+      let multiplier = withdrawalSelect.value === "custom"
+        ? parseFloat(document.getElementById("custom-rate").value)
+        : parseFloat(withdrawalSelect.value);
 
       const target = expenses * multiplier;
+      const returnScenarios = {
+        base: baseReturn,
+        optimistic: baseReturn + 0.02,
+        pessimistic: Math.max(0, baseReturn - 0.02)
+      };
 
-      let years = 0;
-      let total = current;
-      const growthData = [];
-      const yearLabels = [];
+      const buildCurve = (returnRate) => {
+        let total = current;
+        let capital = 0;
+        let years = 0;
+        const curve = [];
+        while (total < target && years < 100) {
+          total = (total + monthly * 12) * (1 + returnRate);
+          curve.push(Math.round(total));
+          years++;
+        }
 
-      // Acumulación hasta alcanzar la libertad financiera
-      while (total < target && years < 100) {
-        total *= (1 + returnRate);
-        total += (monthly * 12);
-        growthData.push(Math.round(total));
-        yearLabels.push(age + years);
-        years++;
-      }
+        capital = total;
+        let drawdownYears = 0;
+        while (capital > 0 && drawdownYears < 100) {
+          capital -= expenses;
+          capital = capital * (1 + returnRate);
+          curve.push(Math.round(Math.max(0, capital)));
+          drawdownYears++;
+        }
+        return { curve, totalYears: years + drawdownYears, accumulationYears: years };
+      };
 
-      const retirementAge = age + years;
+      const baseData = buildCurve(returnScenarios.base);
+      const optimisticData = buildCurve(returnScenarios.optimistic);
+      const pessimisticData = buildCurve(returnScenarios.pessimistic);
 
-      // Simulación tras alcanzar libertad: retiradas y reinversión
-      let drawdownYears = 0;
-      let capital = total;
-      while (capital > 0 && drawdownYears < 100) {
-        capital -= expenses;
-        capital *= (1 + returnRate); // lo restante sigue generando
-        growthData.push(Math.max(0, Math.round(capital)));
-        yearLabels.push(retirementAge + drawdownYears);
-        drawdownYears++;
-      }
+      const totalYears = baseData.curve.length;
+      const yearLabels = Array.from({ length: totalYears }, (_, i) => age + i);
 
       document.getElementById("results").style.display = "block";
-      document.getElementById("result-years").innerText = `Te faltan aproximadamente ${years} años para alcanzar tu libertad financiera.`;
-      document.getElementById("result-target").innerText = `Necesitarás acumular aproximadamente €${Math.round(target).toLocaleString()} para vivir de tus inversiones.`;
-      document.getElementById("result-age").innerText = `Si empiezas ahora, tu capital podría cubrir tus gastos hasta los ${retirementAge + drawdownYears} años.`;
+      document.getElementById("result-years").innerText = `📈 Te faltan aproximadamente ${baseData.accumulationYears} años para alcanzar tu libertad financiera.`;
+      document.getElementById("result-target").innerText = `🎯 Necesitarás un capital mínimo de aproximadamente €${Math.round(target).toLocaleString()} para vivir de tus inversiones.`;
+      document.getElementById("result-age").innerText = `📅 Según el escenario base, tu capital podría sostenerte hasta los ${age + baseData.totalYears} años.`;
 
-      // Pintar gráfico
       const ctx = document.getElementById('wealthChart').getContext('2d');
-      if (window.capChart) window.capChart.destroy(); // evitar múltiples instancias
+      if (window.capChart) window.capChart.destroy();
       window.capChart = new Chart(ctx, {
         type: 'line',
         data: {
           labels: yearLabels,
-          datasets: [{
-            label: 'Evolución del Capital (€)',
-            data: growthData,
-            borderColor: '#3498db',
-            backgroundColor: 'rgba(52, 152, 219, 0.1)',
-            tension: 0.2,
-            fill: true
-          }]
+          datasets: [
+            {
+              label: 'Escenario base',
+              data: baseData.curve,
+              borderColor: '#3498db',
+              backgroundColor: 'rgba(52, 152, 219, 0.1)',
+              tension: 0.2,
+              fill: true
+            },
+            {
+              label: 'Escenario optimista (+2%)',
+              data: optimisticData.curve,
+              borderColor: '#2ecc71',
+              borderDash: [5, 5],
+              fill: false
+            },
+            {
+              label: 'Escenario pesimista (–2%)',
+              data: pessimisticData.curve,
+              borderColor: '#e74c3c',
+              borderDash: [3, 3],
+              fill: false
+            },
+            {
+              label: 'Capital mínimo objetivo',
+              data: Array(totalYears).fill(target),
+              borderColor: '#f39c12',
+              borderDash: [2, 4],
+              fill: false,
+              pointRadius: 0
+            }
+          ]
         },
         options: {
           responsive: true,
           plugins: {
-            legend: { display: false }
+            legend: { display: true }
           },
           scales: {
             y: { beginAtZero: true }
